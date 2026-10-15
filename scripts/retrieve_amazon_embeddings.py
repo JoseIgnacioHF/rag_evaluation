@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Retrieval semántico de páginas del 10-K de Amazon 2017.
+"""Demostración de retrieval semántico sobre el 10-K de Amazon 2017.
 
 Recupera las cinco páginas más similares a una pregunta de FinanceBench
-usando embeddings de Ollama (``nomic-embed-text``) y similitud coseno.
+usando la función pública ``retrieval.retriever.retrieve``.
 """
 
 import sys
@@ -11,9 +11,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from embeddings.ollama_embeddings import embed_text, embed_texts  # noqa: E402
 from ingestion.pdf import extract_pdf_pages  # noqa: E402
-from retrieval.similarity import top_k  # noqa: E402
+from retrieval.retriever import retrieve  # noqa: E402
 
 
 PDF_PATH = ROOT / "data" / "FinanceBench" / "pdfs" / "AMAZON_2017_10K.pdf"
@@ -37,55 +36,36 @@ def main() -> int:
         print("ERROR: no se extrajo ninguna página del PDF.", file=sys.stderr)
         return 1
 
-    non_empty = [chunk for chunk in chunks if chunk["text"].strip()]
-    if not non_empty:
-        print("ERROR: ninguna página contiene texto.", file=sys.stderr)
-        return 1
+    with_text = sum(1 for chunk in chunks if chunk["text"].strip())
 
     print(f"PDF: {PDF_PATH}")
-    print(f"Páginas del PDF: {len(chunks)} (con texto: {len(non_empty)})")
+    print(f"Páginas del PDF: {len(chunks)} (con texto: {with_text})")
     print(f"Pregunta ({FINANCEBENCH_ID}): {QUESTION}\n")
 
     try:
-        chunk_embeddings = embed_texts([chunk["text"] for chunk in non_empty])
-        question_embedding = embed_text(QUESTION)
+        results = retrieve(QUESTION, chunks, top_k=TOP_K)
     except Exception as exc:
-        print(f"ERROR generando embeddings: {exc}", file=sys.stderr)
+        print(f"ERROR durante el retrieval: {exc}", file=sys.stderr)
         return 1
 
-    if any(not embedding for embedding in chunk_embeddings) or not question_embedding:
-        print("ERROR: se han generado embeddings vacíos.", file=sys.stderr)
+    if not results:
+        print("ERROR: el retrieval no devolvió resultados.", file=sys.stderr)
         return 1
 
-    question_dim = len(question_embedding)
-    for chunk, embedding in zip(non_empty, chunk_embeddings):
-        if len(embedding) != question_dim:
-            print(
-                "ERROR: dimensiones incoherentes entre pregunta y página "
-                f"{chunk['page']}: {question_dim} != {len(embedding)}",
-                file=sys.stderr,
-            )
-            return 1
-
-    for chunk, embedding in zip(non_empty, chunk_embeddings):
-        chunk["embedding"] = embedding
-
-    results = top_k(question_embedding, non_empty, k=TOP_K)
-
-    print(f"Top {TOP_K} páginas más similares:")
-    for rank, (score, chunk) in enumerate(results, start=1):
+    print(f"Top {len(results)} páginas más similares:")
+    for rank, result in enumerate(results, start=1):
         print(
-            f"{rank}. {chunk['doc_name']} - pág. {chunk['page']} "
-            f"- similitud coseno: {score:.4f}"
+            f"{rank}. {result['doc_name']} - pág. {result['page']} "
+            f"- similitud coseno: {result['score']:.4f}"
         )
 
-    best_score, best_chunk = results[0]
+    best = results[0]
     print(
-        f"\nPágina mejor clasificada: {best_chunk['doc_name']} "
-        f"(pág. {best_chunk['page']}, similitud {best_score:.4f})"
+        f"\nPágina mejor clasificada: {best['doc_name']} "
+        f"(pág. {best['page']}, similitud {best['score']:.4f})"
     )
     print("-" * 60)
-    print(best_chunk["text"])
+    print(best["text"])
     print("-" * 60)
 
     return 0
