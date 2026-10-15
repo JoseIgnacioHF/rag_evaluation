@@ -4,4 +4,4 @@ __pycache__/
 .env
 
 # Dataset externo
-FinanceBench/
+data/
